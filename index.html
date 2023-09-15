@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Toy car scan info</title>
+    <meta name="viewport" content="width=device-width,user-scalable=no,minimum-scale=1.0,maximum-scale=1.0" />
+    <style>
+      button {
+        width:120px;
+      }
+      #button-div {
+        display:none;
+        align-items:center;
+        justify-content:space-around;
+        position:fixed;
+        bottom:10px;
+        width:100%;
+        z-index:1;
+        border:2px double #000
+      }
+    </style>
+    <script src="https://aframe.io/releases/0.6.0/aframe.min.js"> </script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+    <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
+    <script src="https://raw.githack.com/fcor/arjs-gestures/master/dist/gestures.js"></script>
+    <script src="./js/stars.js"></script>
+    <script>
+      AFRAME.registerComponent("create-buttons",{
+        init: function() {
+
+          let button1=document.createElement("button")
+          button1.innerHTML="RATE toy"
+          button1.setAttribute("id","rating-button")
+          button1.setAttribute("class","btn btn-warning ml-3 mr-3")
+
+          let button2=document.createElement("button")
+          button2.innerHTML="ORDER NOW"
+          button2.setAttribute("id","order-button")
+          button2.setAttribute("class","btn btn-warning mr-3")
+
+          let button3=document.createElement("button")
+          button3.innerHTML="ORDER SUMMARY"
+          button3.setAttribute("id","order-summary-button")
+          button3.setAttribute("class","btn btn-warning ml-3")
+
+          let buttonDiv=document.getElementById("button-div")
+          buttonDiv.appendChild(button3)
+          buttonDiv.appendChild(button1)
+          buttonDiv.appendChild(button2)
+        }
+      })
+      let tableNumber=null;
+      AFRAME.registerComponent("markerhandler",{
+        init: async function () {
+          if (tableNumber==null) {
+            this.askTableNumber();
+          }
+          let dishes=await this.getDishes();
+
+          this.el.addEventListener("markerFound",()=>{
+            if (tableNumber !== null) {
+              let markerId=this.el.id;
+              this.handleMarkerFound(dishes,markerId);
+            }
+          });
+          this.el.addEventListener("markerLost",()=>{
+            this.handleMarkerLost();
+          });
+        },
+        askTableNumber: function () {
+          let iconUrl="https://raw.githubusercontent.com/whitehatjr/menu-card-app/main/hunger.png";
+          swal({
+            title: "Welcome to Hunger!!",
+            icon: iconUrl,
+            content: {
+              element: "input",
+              attributes: {
+                placeholder: "Type your table number",
+                type: "number",
+                min: 1
+              }
+            }
+          }).then(inputValue=>{
+            tableNumber=inputValue;
+          });
+        },
+
+        handleMarkerFound: function (dishes,markerId) {
+
+          let todaysDate=new Date();
+          let todaysDay=todaysDate.getDay();
+
+          let days=[
+            "sunday",
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday"
+          ];
+
+          let dish=dishes.filter(dish=>dish.id==markerId)[0];
+          if (dish.unavailable_days.includes(days[todaysDay])) {
+            swal({
+              icon: "warning",
+              title: dish.dish_name.toUpperCase(),
+              text: "This dish is not available today!!!",
+              timer: 2500,
+              buttons: false
+            });
+          } else {
+
+            var model=document.querySelector(`#model-${dish.id}`);
+            model.setAttribute("visible",true);
+
+            let ingredientsContainer=document.querySelector(
+              `#main-plane-${dish.id}`
+            );
+            ingredientsContainer.setAttribute("visible",true);
+
+            let pricePlane=document.querySelector(`#price-plane-${dish.id}`);
+            pricePlane.setAttribute("visible",true);
+
+            let ratingPlane=document.querySelector(`#rating-plane-${dish.id}`);
+            ratingPlane.setAttribute("visible",true);
+
+            let reviewPlane=document.querySelector(`#review-plane-${dish.id}`);
+            reviewPlane.setAttribute("visible",true);
+            let model=document.querySelector(`#model-${dish.id}`);
+            model.setAttribute("position",dish.model_geometry.position);
+            model.setAttribute("rotation",dish.model_geometry.rotation);
+            model.setAttribute("scale",dish.model_geometry.scale);
+
+            let buttonDiv=document.getElementById("button-div");
+            buttonDiv.style.display="flex";
+            let ratingButton=document.getElementById("rating-button");
+            let orderButtton=document.getElementById("order-button");
+            let orderSummaryButtton=document.getElementById("order-summary-button");
+            let payButton=document.getElementById("pay-button");
+
+            ratingButton.addEventListener("click",()=>this.handleRatings(dish));
+            orderButtton.addEventListener("click",()=>{
+              let tNumber;
+              tableNumber<=9 ? (tNumber=`T0${tableNumber}`):`T${tableNumber}`;
+              this.handleOrder(tNumber,dish);
+              swal({
+                icon: "https://i.imgur.com/4NZ6uLY.jpg",
+                title: "Thanks For Order !",
+                text: "Your order will serve soon on your table!",
+                timer: 2000,
+                buttons: false
+              });
+            });
+            orderSummaryButtton.addEventListener("click",() =>
+              this.handleOrderSummary()
+            );
+            payButton.addEventListener("click",()=>this.handlePayment());
+          }
+        },
+      
+        handleOrder: function (tNumber,dish) {
+
+          firebase
+            .firestore()
+            .collection("tables")
+            .doc(tNumber)
+            .get()
+            .then(doc=>{
+              let details=doc.data();
+              if (details["current_orders"][dish.id]) {
+
+                details["current_orders"][dish.id]["quantity"]+=1;
+
+                let currentQuantity=details["current_orders"][dish.id]["quantity"];
+                details["current_orders"][dish.id]["subtotal"]=
+                  currentQuantity * dish.price;
+              } else {
+                details["current_orders"][dish.id]={
+                  item: dish.dish_name,
+                  price: dish.price,
+                  quantity: 1,
+                  subtotal: dish.price * 1
+                };
+              }
+              details.total_bill+=dish.price;
+
+              firebase
+                .firestore()
+                .collection("tables")
+                .doc(doc.id)
+                .update(details);
+            });
+        },
+        getDishes: async function () {
+          return await firebase
+            .firestore()
+            .collection("dishes")
+            .get()
+            .then(snap=>{
+              return snap.docs.map(doc=>doc.data());
+            });
+        },
+        getOrderSummary: async function (tNumber) {
+          return await firebase
+            .firestore()
+            .collection("tables")
+            .doc(tNumber)
+            .get()
+            .then(doc=>doc.data());
+        },
+        handleOrderSummary: async function () {
+
+          let modalDiv=document.getElementById("modal-div");
+          modalDiv.style.display="flex";
+          let tableBodyTag=document.getElementById("bill-table-body");
+
+          tableBodyTag.innerHTML="";
+
+          let tNumber;
+          tableNumber<=9 ? (tNumber=`T0${tableNumber}`):`T${tableNumber}`;
+
+          let orderSummary=await this.getOrderSummary(tNumber);
+          let currentOrders=Object.keys(orderSummary.current_orders);
+          currentOrders.map(i=>{
+            let tr=document.createElement("tr");
+            let item=document.createElement("td");
+            let price=document.createElement("td");
+            let quantity=document.createElement("td");
+            let subtotal=document.createElement("td");
+            item.innerHTML=orderSummary.current_orders[i].item;
+            price.innerHTML="$"+orderSummary.current_orders[i].price;
+            price.setAttribute("class","text-center");
+            quantity.innerHTML=orderSummary.current_orders[i].quantity;
+            quantity.setAttribute("class","text-center");
+            subtotal.innerHTML="$"+orderSummary.current_orders[i].subtotal;
+            subtotal.setAttribute("class","text-center");
+            tr.appendChild(item);
+            tr.appendChild(price);
+            tr.appendChild(quantity);
+            tr.appendChild(subtotal);
+            tableBodyTag.appendChild(tr);
+          });
+          let totalTr=document.createElement("tr");
+          let td1=document.createElement("td");
+          td1.setAttribute("class","no-line");
+          let td2=document.createElement("td");
+          td1.setAttribute("class","no-line");
+          let td3=document.createElement("td");
+          td1.setAttribute("class","no-line text-cente");
+          let strongTag=document.createElement("strong");
+          strongTag.innerHTML="Total";
+          td3.appendChild(strongTag);
+          let td4=document.createElement("td");
+          td1.setAttribute("class","no-line text-right");
+          td4.innerHTML="$"+orderSummary.total_bill;
+          totalTr.appendChild(td1);
+          totalTr.appendChild(td2);
+          totalTr.appendChild(td3);
+          totalTr.appendChild(td4);
+          tableBodyTag.appendChild(totalTr);
+        },
+        handlePayment: function () {
+
+          document.getElementById("modal-div").style.display="none";
+
+          let tNumber;
+          tableNumber<=9 ? (tNumber=`T0${tableNumber}`):`T${tableNumber}`;
+
+          firebase
+            .firestore()
+            .collection("tables")
+            .doc(tNumber)
+            .update({
+              current_orders: {},
+              total_bill: 0
+            })
+            .then(()=>{
+              swal({
+                icon: "success",
+                title: "Thanks For Paying !",
+                text: "We Hope You Enjoyed Your Food !!",
+                timer: 2500,
+                buttons: false
+              });
+            });
+        },
+        handleRatings: async function (dish) {
+          let tNumber;
+          tableNumber<=9 ? (tNumber=`T0${tableNumber}`):`T${tableNumber}`;
+          let orderSummary=await this.getOrderSummary(tNumber)
+          let currentOrders=Object.keys(orderSummary.current_orders)
+          if(currentOrders.length>0&&currentOrders==dish.id){
+            document.getElementById("rating-modal-div").style.display="flex"
+            document.getElementById("rating-input").value="0"
+            document.getElementById("feedback-input").value=""
+            let saveRatingButton=document.getElementById("save-rating-button")
+            saveRatingButton.addEventListener("click",()=>{
+              let rating=document.getElementById("rating-input").value
+              let feedback=document.getElementById("feedback-input").value
+              firebase.firestore().collection("dishes").doc(dish.id).update({lastReview:feedback,lastRating:rating}).then(()=>{swal({
+                title:"Thanks for rating!!",
+                icon:"success",
+                text:"we hope you liked dish",
+                timer:2500,
+                buttons:false
+              })})
+            })
+          }else{alert("no dish found")}
+        },
+        handleMarkerLost: function () {
+
+          let buttonDiv=document.getElementById("button-div");
+          buttonDiv.style.display="none";
+        }
+      });
+      AFRAME.registerComponent("create-markers",{
+        init: async function () {
+          let mainScene=document.querySelector("#main-scene");
+          let toys=await this.gettoys();
+          toys.map(toy=>{
+            let marker=document.createElement("a-marker");
+            marker.setAttribute("id",toy.id);
+            marker.setAttribute("type","pattern");
+            marker.setAttribute("url",toy.marker_pattern_url);
+            marker.setAttribute("cursor",{
+              rayOrigin: "mouse"
+            });
+            marker.setAttribute("markerhandler",{});
+            mainScene.appendChild(marker);
+
+            let todaysDate=new Date();
+            let todaysDay=todaysDate.getDay();
+
+            let days=[
+              "sunday",
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday",
+              "saturday"
+            ];
+            if (!toy.unavailable_days.includes(days[todaysDay])) {
+
+              let model=document.createElement("a-entity");
+              model.setAttribute("id",`model-${toy.id}`);
+              model.setAttribute("position",toy.model_geometry.position);
+              model.setAttribute("rotation",toy.model_geometry.rotation);
+              model.setAttribute("scale",toy.model_geometry.scale);
+              model.setAttribute("gltf-model",`url(${toy.model_url})`);
+              model.setAttribute("gesture-handler",{});
+              model.setAttribute("visible",false);
+              marker.appendChild(model);
+
+              let mainPlane=document.createElement("a-plane");
+              mainPlane.setAttribute("id",`main-plane-${toy.id}`);
+              mainPlane.setAttribute("position",{ x: 0,y: 0,z: 0 });
+              mainPlane.setAttribute("rotation",{ x: -90,y: 0,z: 0 });
+              mainPlane.setAttribute("width",1.7);
+              mainPlane.setAttribute("height",1.5);
+              mainPlane.setAttribute("visible",false);
+              marker.appendChild(mainPlane);
+
+              let titlePlane=document.createElement("a-plane");
+              titlePlane.setAttribute("id",`title-plane-${toy.id}`);
+              titlePlane.setAttribute("position",{ x: 0,y: 0.89,z: 0.02 });
+              titlePlane.setAttribute("rotation",{ x: 0,y: 0,z: 0 });
+              titlePlane.setAttribute("width",1.69);
+              titlePlane.setAttribute("height",0.3);
+              titlePlane.setAttribute("material",{ color: "#F0C30F" });
+              mainPlane.appendChild(titlePlane);
+
+              let toyTitle=document.createElement("a-entity");
+              toyTitle.setAttribute("id",`toy-title-${toy.id}`);
+              toyTitle.setAttribute("position",{ x: 0,y: 0,z: 0.1 });
+              toyTitle.setAttribute("rotation",{ x: 0,y: 0,z: 0 });
+              toyTitle.setAttribute("text",{
+                font: "monoid",
+                color: "black",
+                width: 1.8,
+                height: 1,
+                align: "center",
+                value: toy.toy_name.toUpperCase()
+              });
+              titlePlane.appendChild(toyTitle);
+
+              let ingredients=document.createElement("a-entity");
+              ingredients.setAttribute("id",`ingredients-${toy.id}`);
+              ingredients.setAttribute("position",{ x: 0.3,y: 0,z: 0.1 });
+              ingredients.setAttribute("rotation",{ x: 0,y: 0,z: 0 });
+              ingredients.setAttribute("text",{
+                font: "monoid",
+                color: "black",
+                width: 2,
+                align: "left",
+                value: `${toy.ingredients.join("\n\n")}`
+              });
+              mainPlane.appendChild(ingredients);
+
+              let pricePlane=document.createElement("a-image");
+              pricePlane.setAttribute("id",`price-plane-${toy.id}`);
+              pricePlane.setAttribute(
+                "src","https://raw.githubusercontent.com/whitehatjr/menu-card-app/main/black-circle.png"
+              );
+              pricePlane.setAttribute("width",0.8);
+              pricePlane.setAttribute("height",0.8);
+              pricePlane.setAttribute("position",{ x: -1.3,y: 0,z: 0.3 });
+              pricePlane.setAttribute("rotation",{ x: -90,y: 0,z: 0 });
+              pricePlane.setAttribute("visible",false);
+
+              let price=document.createElement("a-entity");
+              price.setAttribute("id",`price-${toy.id}`);
+              price.setAttribute("position",{ x: 0.03,y: 0.05,z: 0.1 });
+              price.setAttribute("rotation",{ x: 0,y: 0,z: 0 });
+              price.setAttribute("text",{
+                font: "mozillavr",
+                color: "white",
+                width: 3,
+                align: "center",
+                value: `Only\n $${toy.price}`
+              });
+              pricePlane.appendChild(price);
+              marker.appendChild(pricePlane);
+            }
+          });
+        },
+        gettoys: async function () {
+          return await firebase
+            .firestore()
+            .collection("toys")
+            .get()
+            .then(snap=>{
+              return snap.docs.map(doc=>doc.data());
+            });
+        }
+      });
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.3.1/firebase-app.js"
+      const firebaseConfig={
+        apiKey: "AIzaSyAAAPH2czbFrgzZMOZ120Z-2WAD6whOWaI",
+        authDomain: "project-clxx.firebaseapp.com",
+        databaseURL: "https://project-clxx-default-rtdb.firebaseio.com",
+        projectId: "project-clxx",
+        storageBucket: "project-clxx.appspot.com",
+        messagingSenderId: "591118790287",
+        appId: "1:591118790287:web:07eee1d2e9ea896123cafa"
+      };
+      const app=initializeApp(firebaseConfig)
+    </script>
+  <body style="margin :0px; overflow:hidden;">
+    <a-scene embedded vr-mode-ui="enabled:false" arjs="sourceType:webcam; sourceWidth:1280; sourceHeight:960; displayWidth:1280; displayHeight:960;debugUIEnabled:false;" gesture-detector>
+      <a-entity camera></a-entity>
+      <a-assets>
+        <a-asset-item gltf-model="Toy.glb" id="marker-model"></a-asset-item>
+      </a-assets>
+      <a-marker id="marker" type="pattern" src="pattern-scan-this.patt" cursor="rayOrigin:mouse">
+        <a-entity id="marker-3d-model" position="-1 0 0" scale="0.05 0.05 0.05" gltf-model="#marker-model" gesture-handler></a-entity>
+        <a-plane position="0 0 0" width="1.5" height="1.5" rotation="-90 0 0">
+          <a-plane color="#f00" position="0 0.89 0.2" width="1.49" height="0.3">
+            <a-entity position="0 0 0.1" rotation="0 0 0" text="color:#000; align:center; width:2; font:monoid; value:Red Toy Car"> </a-entity>
+          </a-plane>
+          <a-entity position="0 0 0.1" text="color:#000; align:center; width:2; font:monoid; value:7cm*5cm*5cm"></a-entity>
+        </a-plane>
+      </a-marker>
+    </a-scene>
+    <div id="button-div"></div>
+  </body>
+</html>
